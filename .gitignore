@@ -1,1 +1,4 @@
 config.py
+tracking_data.db
+tracking_data.db-shm
+tracking_data.db-wal    
