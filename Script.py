@@ -4,10 +4,20 @@ from email.header import decode_header
 from datetime import datetime
 import pytz
 from database import setup_database, insert_tracking
+import time
+import logging
+from notification import send_error_notification
 try:
     import config
 except ImportError:
     raise Exception("Please create a config.py file with EMAIL, PASSWORD, and SENDER_EMAIL variables")
+
+# Set up logging
+logging.basicConfig(
+    filename='email_tracker.log',
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 
 def connect_to_gmail(email_address, password):
     """Connect to Gmail using IMAP."""
@@ -51,17 +61,31 @@ def read_emails_from_sender(email_address, password, sender_email):
         imap = connect_to_gmail(email_address, password)
         
         # First, check if there are any already-processed emails
-        imap.select("Processed")
+        try:
+            imap.select("Processed")
+        except:
+            # If Processed folder doesn't exist, create it
+            imap.create("Processed")
+            imap.select("Processed")
+            
         _, processed_messages = imap.search(None, f'FROM "{sender_email}"')
-        processed_ids = set(msg.decode().split()[-1] for msg in processed_messages)
+        processed_ids = set()
+        if processed_messages[0]:  # Only process if there are messages
+            processed_ids = set(msg.decode() for msg in processed_messages[0].split())
         
         # Then process inbox
         imap.select("INBOX")
         _, messages = imap.search(None, f'FROM "{sender_email}"')
         
+        if not messages[0]:  # No messages found
+            logging.info(f"No new messages found from {sender_email}")
+            imap.logout()
+            return
+            
         for email_id in messages[0].split():
+            email_id = email_id.decode()
             if email_id in processed_ids:
-                print(f"Skipping already processed email {email_id}")
+                logging.info(f"Skipping already processed email {email_id}")
                 continue
                 
             try:
@@ -70,6 +94,10 @@ def read_emails_from_sender(email_address, password, sender_email):
                 
                 # Extract date from email
                 date_tuple = email.utils.parsedate_tz(email_message['Date'])
+                if not date_tuple:
+                    logging.warning(f"Could not parse date for email {email_id}")
+                    continue
+                    
                 date = email.utils.formatdate(email.utils.mktime_tz(date_tuple))
                 
                 # Get email content
@@ -80,25 +108,61 @@ def read_emails_from_sender(email_address, password, sender_email):
                 else:
                     body = email_message.get_payload(decode=True).decode('utf-8', errors='replace')
                 
-                if body:
-                    tracking_info = extract_tracking_info(body, date)
-                    for info in tracking_info:
-                        # Save to database
-                        insert_tracking(info)
-                        print(f"Saved to database: {info}")
+                if not body:
+                    logging.warning(f"No text content found in email {email_id}")
+                    continue
+                    
+                tracking_info = extract_tracking_info(body, date)
+                for info in tracking_info:
+                    # Save to database
+                    insert_tracking(info)
+                    logging.info(f"Saved to database: {info}")
                     
                 # Move to processed folder
                 imap.copy(email_id, "Processed")
                 imap.store(email_id, '+FLAGS', '\\Deleted')
+                logging.info(f"Processed and moved email {email_id}")
             
             except Exception as e:
-                print(f"Error processing email {email_id}: {str(e)}")
+                logging.error(f"Error processing email {email_id}: {str(e)}")
+                continue
         
         imap.expunge()
         imap.logout()
+        logging.info("Email processing completed successfully")
         
     except Exception as e:
-        raise Exception(f"Failed to process emails: {str(e)}")
+        logging.error(f"Failed to process emails: {str(e)}")
+        raise
+
+def main_loop():
+    """Main loop to continuously check for new emails"""
+    # Setup database on startup
+    setup_database()
+    logging.info("Database initialized")
+
+    while True:
+        try:
+            # Your email credentials should be loaded from environment variables
+            email_address = config.EMAIL
+            password = config.PASSWORD
+            sender_email = config.SENDER_EMAIL
+            
+            # Process emails
+            read_emails_from_sender(email_address, password, sender_email)
+            
+            # Log success
+            logging.info("Successfully processed emails")
+            
+            # Wait for 5 minutes before next check
+            time.sleep(300)  # 300 seconds = 5 minutes
+            
+        except Exception as e:
+            error_msg = f"Error in main loop: {str(e)}"
+            logging.error(error_msg)
+            send_error_notification(error_msg, email_address, password)
+            time.sleep(60)
 
 if __name__ == "__main__":
-    read_emails_from_sender(config.EMAIL, config.PASSWORD, config.SENDER_EMAIL)
+    logging.info("Starting Email Tracking Service")
+    main_loop()

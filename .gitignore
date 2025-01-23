@@ -1,4 +1,26 @@
+# Config files with sensitive data
 config.py
-tracking_data.db
-tracking_data.db-shm
-tracking_data.db-wal    
+
+# Database files
+*.db
+*.db-shm
+*.db-wal
+
+# Log files
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environment
+.env
+.venv
+env/
+venv/
+
+# Service files
+*.service
+
+email_tracker.service
