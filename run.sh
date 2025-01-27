@@ -1,3 +1,6 @@
 #!/bin/bash
-pip3 install -r requirements.txt
-python3 Script.py
+echo "Installing requirements..."
+pip install -r requirements.txt
+
+echo "Starting Email Tracking Service..."
+python Script.py

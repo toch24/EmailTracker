@@ -1,24 +1,7 @@
-# Email and IMAP handling
-imaplib
-email
-
-# Date and time handling
+# Required packages
 pytz>=2023.3
 
-# Database
-sqlite3
-
-# Email notifications
-smtplib
-
-# Logging
-logging
-
-# Other utilities
-time
-re
-
-# Testing and development (optional)
+# Optional development packages
 pytest>=7.0.0
 black>=22.0.0
 flake8>=4.0.0 
