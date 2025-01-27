@@ -1,6 +1,6 @@
 # Email Tracking Script
 
-This script automatically processes emails, extracts tracking information, and stores it in a SQLite database.
+This script automatically processes emails labeled as "Facturacion" from a specific sender and extracts tracking information, storing it in a SQLite database.
 
 ## Setup Instructions
 
@@ -20,6 +20,23 @@ Create a `config.py` file in the project root:
 EMAIL_ADDRESS = "your.email@gmail.com"
 EMAIL_PASSWORD = "your-16-digit-app-password" # The app password generated above
 SENDER_EMAIL = "sender@example.com" # The email address you want to track
+
+### 3. Email Requirements
+The script will only process emails that meet both criteria:
+- From the specified sender email address
+- Labeled as "Facturacion" in Gmail
+
+To label emails in Gmail:
+1. Open Gmail
+2. Select the email
+3. Click the label icon (tag symbol)
+4. Select "Facturacion" or create the label if it doesn't exist
+5. You can also create a filter to automatically apply this label:
+   - Click the search options (down arrow in search bar)
+   - Enter the sender's email address
+   - Click "Create filter"
+   - Check "Apply the label" and select "Facturacion"
+   - Click "Create filter"
 
 ### 3. Running the Script
 

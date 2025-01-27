@@ -68,17 +68,18 @@ def read_emails_from_sender(email_address, password, sender_email):
             imap.create("Processed")
             imap.select("Processed")
             
-        _, processed_messages = imap.search(None, f'FROM "{sender_email}"')
+        _, processed_messages = imap.search(None, f'FROM "{sender_email}" LABEL "Facturacion"')
         processed_ids = set()
         if processed_messages[0]:  # Only process if there are messages
             processed_ids = set(msg.decode() for msg in processed_messages[0].split())
         
-        # Then process inbox
+        # Then process inbox with both sender and label criteria
         imap.select("INBOX")
-        _, messages = imap.search(None, f'FROM "{sender_email}"')
+        search_criteria = f'FROM "{sender_email}" LABEL "Facturacion"'
+        _, messages = imap.search(None, search_criteria)
         
         if not messages[0]:  # No messages found
-            logging.info(f"No new messages found from {sender_email}")
+            logging.info(f"No new messages found matching criteria: {search_criteria}")
             imap.logout()
             return
             
