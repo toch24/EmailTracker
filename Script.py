@@ -6,7 +6,7 @@ import pytz
 from database import setup_database, insert_tracking
 import time
 import logging
-from notification import send_error_notification
+
 try:
     import config
 except ImportError:
@@ -21,9 +21,14 @@ logging.basicConfig(
 
 def connect_to_gmail(email_address, password):
     """Connect to Gmail using IMAP."""
-    imap = imaplib.IMAP4_SSL("imap.gmail.com")
-    imap.login(email_address, password)
-    return imap
+    try:
+        imap = imaplib.IMAP4_SSL("imap.gmail.com")
+        imap.login(email_address, password)
+        logging.info("Successfully connected to Gmail")
+        return imap
+    except Exception as e:
+        logging.error(f"Failed to connect to Gmail: {str(e)}")
+        raise
 
 def extract_tracking_info(body, date):
     """Extract tracking numbers, weight, and price from email body."""
@@ -55,79 +60,77 @@ def extract_tracking_info(body, date):
 def read_emails_from_sender(email_address, password, sender_email):
     """Read emails from a specific sender and extract tracking information."""
     try:
-        # Setup database first
-        setup_database()
-        
+        # Connect to Gmail
         imap = connect_to_gmail(email_address, password)
         
-        # First, check if there are any already-processed emails
-        try:
-            imap.select("Processed")
-        except:
-            # If Processed folder doesn't exist, create it
-            imap.create("Processed")
-            imap.select("Processed")
-            
-        _, processed_messages = imap.search(None, f'FROM "{sender_email}" LABEL "Facturacion"')
-        processed_ids = set()
-        if processed_messages[0]:  # Only process if there are messages
-            processed_ids = set(msg.decode() for msg in processed_messages[0].split())
+        # Select INBOX
+        status, messages = imap.select("INBOX")
+        if status != 'OK':
+            raise Exception(f"Failed to select INBOX: {messages}")
         
-        # Then process inbox with both sender and label criteria
-        imap.select("INBOX")
-        search_criteria = f'FROM "{sender_email}" LABEL "Facturacion"'
-        _, messages = imap.search(None, search_criteria)
+        logging.info("Successfully selected INBOX")
         
-        if not messages[0]:  # No messages found
-            logging.info(f"No new messages found matching criteria: {search_criteria}")
-            imap.logout()
-            return
-            
-        for email_id in messages[0].split():
-            email_id = email_id.decode()
-            if email_id in processed_ids:
-                logging.info(f"Skipping already processed email {email_id}")
-                continue
-                
+        # Search for emails from sender
+        status, messages = imap.search(None, f'FROM "{sender_email}"')
+        if status != 'OK':
+            raise Exception(f"Failed to search emails: {messages}")
+        
+        email_ids = messages[0].split()
+        logging.info(f"Found {len(email_ids)} emails to process")
+        
+        for email_id in email_ids:
             try:
-                _, msg_data = imap.fetch(email_id, "(RFC822)")
+                # Fetch email content
+                status, msg_data = imap.fetch(email_id, "(RFC822)")
+                if status != 'OK':
+                    logging.error(f"Failed to fetch email {email_id}")
+                    continue
+                
                 email_message = email.message_from_bytes(msg_data[0][1])
                 
-                # Extract date from email
-                date_tuple = email.utils.parsedate_tz(email_message['Date'])
-                if not date_tuple:
-                    logging.warning(f"Could not parse date for email {email_id}")
-                    continue
-                    
-                date = email.utils.formatdate(email.utils.mktime_tz(date_tuple))
+                # Extract date
+                date_str = email_message['Date']
+                date_tuple = email.utils.parsedate_tz(date_str)
+                if date_tuple:
+                    date = email.utils.formatdate(email.utils.mktime_tz(date_tuple))
+                else:
+                    date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 
                 # Get email content
+                body = None
                 if email_message.is_multipart():
-                    body = next((part.get_payload(decode=True).decode('utf-8', errors='replace')
-                               for part in email_message.walk()
-                               if part.get_content_type() == "text/plain"), None)
+                    for part in email_message.walk():
+                        if part.get_content_type() == "text/plain":
+                            body = part.get_payload(decode=True).decode('utf-8', errors='replace')
+                            break
                 else:
                     body = email_message.get_payload(decode=True).decode('utf-8', errors='replace')
                 
-                if not body:
-                    logging.warning(f"No text content found in email {email_id}")
-                    continue
+                if body:
+                    tracking_info = extract_tracking_info(body, date)
+                    for info in tracking_info:
+                        logging.info(f"Extracted tracking info: {info}")
+                        insert_tracking(info)
+                        print(f"Saved to database: {info}")
                     
-                tracking_info = extract_tracking_info(body, date)
-                for info in tracking_info:
-                    # Save to database
-                    insert_tracking(info)
-                    logging.info(f"Saved to database: {info}")
+                    # Move to processed folder
+                    try:
+                        imap.create('Processed')
+                    except:
+                        pass  # Folder might already exist
                     
-                # Move to processed folder
-                imap.copy(email_id, "Processed")
-                imap.store(email_id, '+FLAGS', '\\Deleted')
-                logging.info(f"Processed and moved email {email_id}")
-            
+                    status = imap.copy(email_id, 'Processed')
+                    if status[0] == 'OK':
+                        imap.store(email_id, '+FLAGS', '\\Deleted')
+                        logging.info(f"Moved email {email_id} to Processed folder")
+                    else:
+                        logging.error(f"Failed to move email {email_id} to Processed folder")
+                
             except Exception as e:
                 logging.error(f"Error processing email {email_id}: {str(e)}")
                 continue
         
+        # Cleanup
         imap.expunge()
         imap.logout()
         logging.info("Email processing completed successfully")
@@ -144,24 +147,16 @@ def main_loop():
 
     while True:
         try:
-            # Your email credentials should be loaded from environment variables
-            email_address = config.EMAIL
-            password = config.PASSWORD
-            sender_email = config.SENDER_EMAIL
-            
             # Process emails
-            read_emails_from_sender(email_address, password, sender_email)
-            
-            # Log success
-            logging.info("Successfully processed emails")
+            read_emails_from_sender(config.EMAIL, config.PASSWORD, config.SENDER_EMAIL)
             
             # Wait for 5 minutes before next check
-            time.sleep(300)  # 300 seconds = 5 minutes
+            logging.info("Waiting 5 minutes before next check...")
+            time.sleep(300)
             
         except Exception as e:
-            error_msg = f"Error in main loop: {str(e)}"
-            logging.error(error_msg)
-            send_error_notification(error_msg, email_address, password)
+            logging.error(f"Error in main loop: {str(e)}")
+            # Wait 1 minute before retry on error
             time.sleep(60)
 
 if __name__ == "__main__":
